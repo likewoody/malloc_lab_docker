@@ -26,7 +26,7 @@
 /* 매크로 함수들 */
 #define MAX(x, y)           ((x) > (y)? (x) : (y))
 
-/* 사이즈와 할당 비트를 word에 Pack */
+/* size와 alloc 비트를 하나의 8bytes(1워드) 값으로 합치는 것 */
 #define PACK(size, alloc)   ((size) | (alloc))
 
 /* word를 p 주소에 읽기와 쓰기를 실행 */
@@ -35,7 +35,7 @@
 
 /* 주소 p의 block size와 할당 비트를 읽음 */
 #define GET_SIZE(p)         (GET(p) & ~0b1111)
-#define GET_ALLOC(p)        (GET(p) & ~0b1)
+#define GET_ALLOC(p)        (GET(p) & 0b1)
 
 /* block 포인터가 주어졌을 때, 그것의 헤더와 푸터를 주소를 계산 */
 #define HDRP(bp)            ((char *)(bp) - DSIZE)
@@ -45,9 +45,11 @@
 #define NEXT_BLKP(bp)       ((char *)(bp) + GET_SIZE(((char *)(bp) - DSIZE)))
 #define PREV_BLKP(bp)       ((char *)(bp) - GET_SIZE(((char *)(bp) - (ALIGNMENT))))
 
-
-// heap_listp
-static unsigned *heap_listp;
+/*
+    static으로 선언한 이유
+    - free로인해 잘못 해제하지 못하게 하기 위해 static 사용
+*/
+static char *heap_listp;
 
 /*********************************************************
  * NOTE TO STUDENTS: Before you do anything else, please
@@ -74,27 +76,6 @@ team_t team = {
 
 #define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
 
-
-/*
- * mm_init - initialize the malloc package.
- */
-int mm_init(void)
-{
-    /* Create the initial empty heap */
-    if ((heap_listp == mem_sbrk(4 * DSIZE)) == (void *)-1) 
-        return -1;
-
-    PUT(heap_listp, 0);                                     /* Alignment padding */
-    PUT(heap_listp + (1 * DSIZE), PACK(ALIGNMENT, 1));      /* Prologue header */
-    PUT(heap_listp + (2 * DSIZE), PACK(ALIGNMENT, 1));      /* Prologue footer */
-    PUT(heap_listp + (3 * DSIZE), PACK(0, 1));              /* Epilogue header */
-    heap_listp += (2*DSIZE);     /* heap의 시작지점 설정 Prologue의 footer위치로 */
-
-    /* 빈 힙을 CHUNKSIZE bytes의 free block들로 확장 */
-    if (extend_heap(CHUNKSIZE / DSIZE) == NULL)
-        return -1;
-    return 0;
-}
 
 /* Extend new free block */
 static void *extend_heap(size_t words)
@@ -151,6 +132,85 @@ static void *coalesce(void *bp)
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);                         /* 병합된 새 블록의 시작은 이전 블록 */
     }
+}
+
+// 어떻게 find_fit 할당 정책으로 찾을 수 있을까?
+// heap_lisq first fit 앞에서부터 순차적으로 순회하면서 fit한 장소 찾으면 그 주소 return한다.
+/*
+
+    파라미터로 받는 asize를 어디다 사용하지?
+    왜 사용하지?
+
+    // heap_listq의 시작 위치 = prologue의 footer를 가리킨다.
+    heap_listq = NEXT_BLKP(FTRP(heap_listq))부터 시작
+
+    while 무한 반복 (종료 조건 if문으로 설정) 
+    {
+        if block_size가 0이라면 like a null pointer
+            return NULL;
+        
+        if allocation bit가 0이고, block_size가 a_size 보다 클 때
+            현재 주소 리턴
+            return heap_listq;
+        
+        그게 아니라면 다음 블록으로
+        heap_listq = NEXT_BLKP(heap_listq);
+    }
+*/
+
+/*
+    purpose: 
+        - find fit of heap list address
+
+    parameter:
+        - size_t asize: adjusted된 size free list인가
+
+    allocation method:
+        - first fit
+    
+    return:
+        - if GET_ALLOC(heap_listp) == 0, heap_listp 
+        - else NULL
+    
+*/
+static void *find_fit(size_t a_size) {
+    heap_listp = NEXT_BLKP(FTRP(heap_listp));
+    
+    while (1) 
+    {
+        if (GET_SIZE(heap_listp) == 0)
+            return NULL;
+        
+        if (GET_ALLOC(heap_listp) == 0 && GET_SIZE(HDRP(heap_listp)) >= a_size)
+            return heap_listp;
+        
+        heap_listp = NEXT_BLKP(heap_listp);
+    }
+}
+
+static void place(void *bp, size_t a_size) {
+
+}
+
+/*
+ * mm_init - initialize the malloc package.
+ */
+int mm_init(void)
+{
+    /* Create the initial empty heap */
+    if ((heap_listp == mem_sbrk(4 * DSIZE)) == (void *)-1) 
+        return -1;
+
+    PUT(heap_listp, 0);                                     /* Alignment padding */
+    PUT(heap_listp + (1 * DSIZE), PACK(ALIGNMENT, 1));      /* Prologue header */
+    PUT(heap_listp + (2 * DSIZE), PACK(ALIGNMENT, 1));      /* Prologue footer */
+    PUT(heap_listp + (3 * DSIZE), PACK(0, 1));              /* Epilogue header */
+    heap_listp += (2*DSIZE);     /* heap의 시작지점 설정 Prologue의 footer위치로 */
+
+    /* 빈 힙을 CHUNKSIZE bytes의 free block들로 확장 */
+    if (extend_heap(CHUNKSIZE / DSIZE) == NULL)
+        return -1;
+    return 0;
 }
 
 /*
